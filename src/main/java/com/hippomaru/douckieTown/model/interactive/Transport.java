@@ -13,6 +13,7 @@ public class Transport extends TrafficMember{
     private final Random random = new Random();
     private final int possibleStepsCount = random.nextInt(135) + 15;
     private int stepsCounter;
+    private int waitCounter = 0;
 
     public void chooseDirection(List<Direction> possibleDirections){
         currentDirection = possibleDirections.get(random.nextInt(possibleDirections.size()));

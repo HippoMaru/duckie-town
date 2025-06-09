@@ -20,8 +20,9 @@ import java.util.List;
 @Setter
 public class GameManager {
 
-    private final static double TRANSPORT_SPAWN_PROBABILITY = 0.02;
+    private final static double TRANSPORT_SPAWN_PROBABILITY = 0.04;
     private final static double TRANSPORT_MOVE_PROBABILITY = 0.7;
+    private final static int TRANSPORT_MAX_WAIT = 5;
 
     private List<Agent> successfulAgents = new ArrayList<>();
     private final CellGrid map;
@@ -223,8 +224,11 @@ public class GameManager {
             Cell curCell = map.getGrid()[coords.x()][coords.y()];
             Transport transport = (Transport) curCell.getCarriedEntity();
             if (!isPossibleToMove(transport.getNextCoords(coords)) || 
-                    getPossibleDirections(coords).size() > 2)
+                    getPossibleDirections(coords).size() > 2 ||
+                    transport.getWaitCounter() >= TRANSPORT_MAX_WAIT){
                 transport.chooseDirection(getPossibleDirections(coords));
+                transport.setWaitCounter(0);
+            }
             Coords nextCoords = transport.getNextCoords(coords);
             if (random.nextDouble() < TRANSPORT_MOVE_PROBABILITY) {
                 Cell nextCell = map.getGrid()[nextCoords.x()][nextCoords.y()];
@@ -233,6 +237,9 @@ public class GameManager {
                     TRAFFIC_MEMBER_COORDS.get("TRANSPORT").add(nextCoords);
                     curCell.setCarriedEntity(null);
                     nextCell.setCarriedEntity(transport);
+                }
+                else {
+                    transport.setWaitCounter(transport.getWaitCounter() + 1);
                 }
             }
             transport.setStepsCounter(transport.getStepsCounter() + 1);
