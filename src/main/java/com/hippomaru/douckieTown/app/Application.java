@@ -6,13 +6,11 @@ import java.util.concurrent.TimeUnit;
 
 public class Application {
     public static void main(String[] args) throws InterruptedException {
-        CellGrid map = new CellGrid("src/main/resources/map_v1.txt");
+        CellGrid map = new CellGrid("src/main/resources/map_one_agent.txt");
+        CellGrid map3 = new CellGrid("src/main/resources/map_three_agents.txt");
+        CellGrid map5 = new CellGrid("src/main/resources/map_five_agents.txt");
 
-        GameManager manager = new GameManager(map);
-
-        var tempCoords = manager.getTRAFFIC_MEMBER_COORDS().get("AGENTS_ON_INIT");
-        tempCoords.forEach(
-                (c -> System.out.println(map.getGrid()[c.x()][c.y()].getCarriedEntity())));
+        GameManager manager = new GameManager(map5, 10, 0.04);
 
         while (!manager.isFinished()) {
             manager.doStep();

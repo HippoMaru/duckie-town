@@ -21,9 +21,11 @@ import java.util.concurrent.*;
 @Setter
 public class GameManager {
 
-    private final static double TRANSPORT_SPAWN_PROBABILITY = 0.04;
+    private final double TRANSPORT_SPAWN_PROBABILITY;
     private final static double TRANSPORT_MOVE_PROBABILITY = 0.7;
     private final static int TRANSPORT_MAX_WAIT = 5;
+    private final int MAX_AGENTS;
+    private final static int RESPAWN_COUNTER  = 7;
 
     private List<Agent> successfulAgents = new ArrayList<>();
     private final CellGrid map;
@@ -31,15 +33,18 @@ public class GameManager {
     private final Map<String, List<Coords>> TRAFFIC_MEMBER_COORDS;
     private final Random random = new Random();
 
-    // Потоки и агенты
     private List<Agent> agents = Collections.synchronizedList(new ArrayList<>());
 
-    // Графические компоненты
+    private int spawn_tick = 0;
+    private int agents_counter = 0;
+
     private JFrame frame;
     private MapPanel mapPanel;
-    private static final int CELL_SIZE = 30; // Размер ячейки в пикселях
+    private static final int CELL_SIZE = 20;
 
-    public GameManager(CellGrid map){
+    public GameManager(CellGrid map, int maxAgents, double transportSpawnProbability){
+        this.TRANSPORT_SPAWN_PROBABILITY = transportSpawnProbability;
+        this.MAX_AGENTS = maxAgents;
         this.map = map;
 
         // Инициализация карт с изменяемыми списками
@@ -89,8 +94,15 @@ public class GameManager {
         despawnTransport();
         moveAgents();
         moveTransport();
+
+        spawn_tick++;
+        if (spawn_tick % RESPAWN_COUNTER == 0) {
+            spawnAgents();
+            spawn_tick = 0;
+        }
+
         spawnTransport();
-        updateVisualization(); // Обновляем визуализацию после шага
+        updateVisualization();
     }
 
     private void updateVisualization() {
@@ -156,13 +168,15 @@ public class GameManager {
     }
 
     public boolean isFinished(){
-        return agents.isEmpty();
+        return agents.isEmpty() && agents_counter >= MAX_AGENTS;
     }
 
     private void spawnAgents(){
         synchronized (map) {
             for (Coords coords : CELL_TYPES_COORDS.get(CellType.AGENT_SPAWN)) {
+                if (agents_counter >= MAX_AGENTS) break;
                 Cell cell = map.getGrid()[coords.x()][coords.y()];
+                if (cell.getCarriedEntity() != null) continue;
                 Agent agent = new Agent();
                 agent.setCurrentDirection(Direction.UP);
                 agent.setCurrentCoords(coords);
@@ -175,6 +189,8 @@ public class GameManager {
                 Thread agentThread = new Thread(agent);
                 agentThread.start();
                 agents.add(agent);
+
+                agents_counter++;
             }
         }
     }
