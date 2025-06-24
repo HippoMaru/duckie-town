@@ -15,6 +15,7 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.*;
 
 @Getter
 @Setter
@@ -29,6 +30,9 @@ public class GameManager {
     private final Map<CellType, List<Coords>> CELL_TYPES_COORDS;
     private final Map<String, List<Coords>> TRAFFIC_MEMBER_COORDS;
     private final Random random = new Random();
+
+    // Потоки и агенты
+    private List<Agent> agents = Collections.synchronizedList(new ArrayList<>());
 
     // Графические компоненты
     private JFrame frame;
@@ -46,7 +50,7 @@ public class GameManager {
 
         TRAFFIC_MEMBER_COORDS = new HashMap<>();
         TRAFFIC_MEMBER_COORDS.put("TRANSPORT", new ArrayList<>());
-        TRAFFIC_MEMBER_COORDS.put("AGENT", new ArrayList<>());
+        TRAFFIC_MEMBER_COORDS.put("AGENTS_ON_INIT", new ArrayList<>());
 
         // Заполнение координат
         for (int x = 0; x < map.getWidth(); x++) {
@@ -98,7 +102,9 @@ public class GameManager {
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-            drawMap(g);
+            synchronized (map) {
+                drawMap(g);
+            }
         }
 
         private void drawMap(Graphics g) {
@@ -150,102 +156,127 @@ public class GameManager {
     }
 
     public boolean isFinished(){
-        return TRAFFIC_MEMBER_COORDS.get("AGENT").isEmpty();
+        return agents.isEmpty();
     }
 
     private void spawnAgents(){
-        for (Coords coords: CELL_TYPES_COORDS.get(CellType.AGENT_SPAWN)){
-            Cell cell = map.getGrid()[coords.x()][coords.y()];
-            Agent agent = new Agent();
-            agent.setCurrentDirection(Direction.UP);
-            agent.analyzeMap(map, coords, CELL_TYPES_COORDS.get(CellType.FINISH));
-            cell.setCarriedEntity(agent);
-            TRAFFIC_MEMBER_COORDS.get("AGENT").add(coords);
+        synchronized (map) {
+            for (Coords coords : CELL_TYPES_COORDS.get(CellType.AGENT_SPAWN)) {
+                Cell cell = map.getGrid()[coords.x()][coords.y()];
+                Agent agent = new Agent();
+                agent.setCurrentDirection(Direction.UP);
+                agent.setCurrentCoords(coords);
+                agent.setMap(map);
+                agent.analyzeMap(map, coords, CELL_TYPES_COORDS.get(CellType.FINISH));
+                cell.setCarriedEntity(agent);
+                TRAFFIC_MEMBER_COORDS.get("AGENTS_ON_INIT").add(coords);
+
+                // Запуск потока агента
+                Thread agentThread = new Thread(agent);
+                agentThread.start();
+                agents.add(agent);
+            }
         }
     }
+
     private void spawnTransport(){
-        for (Coords coords: CELL_TYPES_COORDS.get(CellType.TRANSPORT_SPAWN)){
-            Cell cell = map.getGrid()[coords.x()][coords.y()];
-            if (cell.getCarriedEntity() == null &&
-                    random.nextDouble() < TRANSPORT_SPAWN_PROBABILITY){
-                Transport transport = new Transport();
-                List<Direction> possibleDirections = getPossibleDirections(coords);
-                transport.chooseDirection(possibleDirections);
-                cell.setCarriedEntity(transport);
-                TRAFFIC_MEMBER_COORDS.get("TRANSPORT").add(coords);
+        synchronized (map) {
+            for (Coords coords : CELL_TYPES_COORDS.get(CellType.TRANSPORT_SPAWN)) {
+                Cell cell = map.getGrid()[coords.x()][coords.y()];
+                if (cell.getCarriedEntity() == null &&
+                        random.nextDouble() < TRANSPORT_SPAWN_PROBABILITY) {
+                    Transport transport = new Transport();
+                    List<Direction> possibleDirections = getPossibleDirections(coords);
+                    transport.chooseDirection(possibleDirections);
+                    cell.setCarriedEntity(transport);
+                    TRAFFIC_MEMBER_COORDS.get("TRANSPORT").add(coords);
+                }
             }
         }
     }
 
     private void despawnAgents(){
-        for (Coords coords: CELL_TYPES_COORDS.get(CellType.FINISH)){
-            Cell cell = map.getGrid()[coords.x()][coords.y()];
-            if (cell.getCarriedEntity() instanceof Agent){
-                successfulAgents.add((Agent) cell.getCarriedEntity());
-                cell.setCarriedEntity(null);
-                TRAFFIC_MEMBER_COORDS.get("AGENT").remove(coords);
+        synchronized (map) {
+            for (Coords coords : CELL_TYPES_COORDS.get(CellType.FINISH)) {
+                Cell cell = map.getGrid()[coords.x()][coords.y()];
+                if (cell.getCarriedEntity() instanceof Agent agent) {
+                    successfulAgents.add(agent);
+                    cell.setCarriedEntity(null);
+                    TRAFFIC_MEMBER_COORDS.get("AGENTS_ON_INIT").remove(coords);
+
+                    // Остановка потока и удаление агента
+                    agent.stop();
+                    agents.remove(agent);
+                }
             }
         }
     }
-    
+
     private void despawnTransport(){
-        List<Coords> tempCoords = List.copyOf(TRAFFIC_MEMBER_COORDS.get("TRANSPORT"));
-        for (Coords coords: tempCoords){
-            Cell cell = map.getGrid()[coords.x()][coords.y()];
-            Transport transport = (Transport) cell.getCarriedEntity();
-            if (transport.getStepsCounter() >= transport.getPossibleStepsCount()){
-                cell.setCarriedEntity(null);
-                TRAFFIC_MEMBER_COORDS.get("TRANSPORT").remove(coords);
-            };
+        synchronized (map) {
+            List<Coords> tempCoords = List.copyOf(TRAFFIC_MEMBER_COORDS.get("TRANSPORT"));
+            for (Coords coords : tempCoords) {
+                Cell cell = map.getGrid()[coords.x()][coords.y()];
+                if (cell.getCarriedEntity() instanceof Transport transport) {
+                    if (transport.getStepsCounter() >= transport.getPossibleStepsCount()) {
+                        cell.setCarriedEntity(null);
+                        TRAFFIC_MEMBER_COORDS.get("TRANSPORT").remove(coords);
+                    }
+                }
+            }
         }
     }
 
     private void moveAgents(){
-        List<Coords> tempCoords = List.copyOf(TRAFFIC_MEMBER_COORDS.get("AGENT"));
-        for (Coords coords: tempCoords){
-            Cell curCell = map.getGrid()[coords.x()][coords.y()];
-            Agent agent = (Agent) curCell.getCarriedEntity();
-            Coords nextCoords = agent.getNextCoords();
-            Cell nextCell = map.getGrid()[nextCoords.x()][nextCoords.y()];
-            if (nextCell.getCarriedEntity() == null){
-                TRAFFIC_MEMBER_COORDS.get("AGENT").remove(coords);
-                TRAFFIC_MEMBER_COORDS.get("AGENT").add(nextCoords);
-                curCell.setCarriedEntity(null);
-                nextCell.setCarriedEntity(agent);
-                agent.setSuccessStepsCounter(agent.getSuccessStepsCounter() + 1);
-            }
-            agent.setStepsCounter(agent.getStepsCounter() + 1);
+        List<Agent> currentAgents;
+        synchronized (agents) {
+            currentAgents = new ArrayList<>(agents);
+        }
+
+        if (currentAgents.isEmpty()) return;
+
+        CountDownLatch latch = new CountDownLatch(currentAgents.size());
+        for (Agent agent : currentAgents) {
+            agent.prepareStep(latch);
+            agent.requestStep();
+        }
+
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
     private void moveTransport(){
-        List<Coords> tempCoords = List.copyOf(TRAFFIC_MEMBER_COORDS.get("TRANSPORT"));
-        for (Coords coords: tempCoords){
-            Cell curCell = map.getGrid()[coords.x()][coords.y()];
-            Transport transport = (Transport) curCell.getCarriedEntity();
-            if (!isPossibleToMove(transport.getNextCoords(coords)) || 
-                    getPossibleDirections(coords).size() > 2 ||
-                    transport.getWaitCounter() >= TRANSPORT_MAX_WAIT){
-                transport.chooseDirection(getPossibleDirections(coords));
-                transport.setWaitCounter(0);
-            }
-            Coords nextCoords = transport.getNextCoords(coords);
-            if (random.nextDouble() < TRANSPORT_MOVE_PROBABILITY) {
-                Cell nextCell = map.getGrid()[nextCoords.x()][nextCoords.y()];
-                if (nextCell.getCarriedEntity() == null){
-                    TRAFFIC_MEMBER_COORDS.get("TRANSPORT").remove(coords);
-                    TRAFFIC_MEMBER_COORDS.get("TRANSPORT").add(nextCoords);
-                    curCell.setCarriedEntity(null);
-                    nextCell.setCarriedEntity(transport);
+        synchronized (map) {
+            List<Coords> tempCoords = List.copyOf(TRAFFIC_MEMBER_COORDS.get("TRANSPORT"));
+            for (Coords coords : tempCoords) {
+                Cell curCell = map.getGrid()[coords.x()][coords.y()];
+                if (!(curCell.getCarriedEntity() instanceof Transport transport)) continue;
+
+                if (!isPossibleToMove(transport.getNextCoords(coords)) ||
+                        getPossibleDirections(coords).size() > 2 ||
+                        transport.getWaitCounter() >= TRANSPORT_MAX_WAIT) {
+                    transport.chooseDirection(getPossibleDirections(coords));
+                    transport.setWaitCounter(0);
                 }
-                else {
-                    transport.setWaitCounter(transport.getWaitCounter() + 1);
+                Coords nextCoords = transport.getNextCoords(coords);
+                if (random.nextDouble() < TRANSPORT_MOVE_PROBABILITY) {
+                    Cell nextCell = map.getGrid()[nextCoords.x()][nextCoords.y()];
+                    if (nextCell.getCarriedEntity() == null) {
+                        TRAFFIC_MEMBER_COORDS.get("TRANSPORT").remove(coords);
+                        TRAFFIC_MEMBER_COORDS.get("TRANSPORT").add(nextCoords);
+                        curCell.setCarriedEntity(null);
+                        nextCell.setCarriedEntity(transport);
+                    } else {
+                        transport.setWaitCounter(transport.getWaitCounter() + 1);
+                    }
                 }
+                transport.setStepsCounter(transport.getStepsCounter() + 1);
             }
-            transport.setStepsCounter(transport.getStepsCounter() + 1);
         }
     }
-
 
     private List<Direction> getPossibleDirections(Coords coords) {
         int x = coords.x();
@@ -264,7 +295,7 @@ public class GameManager {
                 .toList();
     }
 
-    private boolean isPossibleToMove(Coords coords){
+    private boolean isPossibleToMove(Coords coords) {
         int x = coords.x();
         int y = coords.y();
         return x >= 0 && x < map.getWidth() &&
